@@ -1,0 +1,10 @@
+.gradle/
+build/
+.idea/
+.kotlin/
+local.properties
+.DS_Store
+*.log
+kotlin-js-store/
+xcuserdata/
+*.xcresult

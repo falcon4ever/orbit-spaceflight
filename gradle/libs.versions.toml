@@ -1,0 +1,44 @@
+[versions]
+kotlin = "2.4.10"
+coroutines = "1.11.0"
+turbine = "1.2.1"
+orbit = "unspecified"
+kotlinxBenchmark = "0.4.14"
+agp = "9.3.0"
+composeMultiplatform = "1.11.1"
+androidxActivityCompose = "1.13.0"
+androidxCoreKtx = "1.19.0"
+jbLifecycle = "2.11.0"
+nav3Runtime = "1.2.0-alpha04"
+jbNav3Ui = "1.2.0-alpha02"
+kotlinxSerialization = "1.9.0"
+
+[libraries]
+androidxActivityCompose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivityCompose" }
+androidxCoreKtx = { module = "androidx.core:core-ktx", version.ref = "androidxCoreKtx" }
+androidxNav3Runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "nav3Runtime" }
+jbLifecycleViewmodelCompose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "jbLifecycle" }
+jbLifecycleViewmodelNav3 = { module = "androidx.lifecycle:lifecycle-viewmodel-navigation3", version.ref = "jbLifecycle" }
+jbNav3Ui = { module = "org.jetbrains.androidx.navigation3:navigation3-ui", version.ref = "jbNav3Ui" }
+kotlinCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinCoroutinesSwing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
+kotlinCoroutinesTest = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinxBenchmarkRuntime = { module = "org.jetbrains.kotlinx:kotlinx-benchmark-runtime", version.ref = "kotlinxBenchmark" }
+kotlinxSerializationCore = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "kotlinxSerialization" }
+kotlinxSerializationJson = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+orbitCompose = { module = "org.orbit-mvi:orbit-compose", version.ref = "orbit" }
+orbitCore = { module = "org.orbit-mvi:orbit-core", version.ref = "orbit" }
+orbitViewmodel = { module = "org.orbit-mvi:orbit-viewmodel", version.ref = "orbit" }
+turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+
+[plugins]
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+androidKmpLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
+kotlinAllopen = { id = "org.jetbrains.kotlin.plugin.allopen", version.ref = "kotlin" }
+kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlinxBenchmark = { id = "org.jetbrains.kotlinx.benchmark", version.ref = "kotlinxBenchmark" }

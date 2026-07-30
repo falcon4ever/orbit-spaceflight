@@ -1,0 +1,12 @@
+# The Spaceflight entry API: the surface orbit-spaceflight and orbit-spaceflight-noop
+# must share exactly, so release variants can swap the twin in. Regenerate with
+#   ./gradlew :orbit-spaceflight:jvmTest -Dspaceflight.updateEntryApi=true
+
+fun clearRecording(): void
+fun decoration(): ContainerDecoration
+fun install$default(Spaceflight, int, int, Set, int, Object): void
+fun install(int, int, Set): void
+fun observer(): OrbitEventObserver
+fun retainedEventCount(): int
+val INSTANCE: Spaceflight
+val isAvailable: boolean

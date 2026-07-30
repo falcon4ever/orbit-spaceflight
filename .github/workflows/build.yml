@@ -1,0 +1,36 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout orbit-spaceflight
+        uses: actions/checkout@v4
+        with:
+          path: orbit-spaceflight
+
+      # Until the observer SPI is published upstream, build against the fork branch
+      - name: Checkout orbit-mvi fork (observer SPI branch)
+        uses: actions/checkout@v4
+        with:
+          repository: falcon4ever/orbit-mvi
+          ref: feature/orbit-core-observer-spi
+          path: orbit-mvi
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and test
+        working-directory: orbit-spaceflight
+        run: ./gradlew build
