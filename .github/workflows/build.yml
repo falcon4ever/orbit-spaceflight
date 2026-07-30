@@ -6,8 +6,11 @@ on:
   pull_request:
 
 jobs:
-  build:
-    runs-on: macos-latest
+  # Everything a Linux host can build: JVM, Android, JS, Wasm, Linux/Windows/androidNative
+  # targets, and all shared-source-set metadata. Apple compile/test tasks are auto-disabled
+  # by the Kotlin plugin on non-Mac hosts, so plain `build` is safe and complete here.
+  linux:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout orbit-spaceflight
         uses: actions/checkout@v4
@@ -33,14 +36,69 @@ jobs:
         with:
           cache-read-only: false
 
-      # The Kotlin/Native compiler + platform libs (~GBs) live outside Gradle's cache and
-      # were re-downloaded on every run
+      # The Kotlin/Native compiler + platform libs live outside Gradle's cache
       - name: Cache Kotlin/Native toolchain
         uses: actions/cache@v4
         with:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ hashFiles('orbit-spaceflight/gradle/libs.versions.toml') }}
 
-      - name: Build and test
+      - name: Build and test (non-Apple targets)
         working-directory: orbit-spaceflight
         run: ./gradlew build
+
+  # The Apple half: device-target compiles plus the simulator/macOS test suites. Test tasks
+  # imply their own compile and link work; device targets are compile-only. Unqualified task
+  # names run in every module that declares them (core, logging, noop, demo/shared).
+  apple:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout orbit-spaceflight
+        uses: actions/checkout@v4
+        with:
+          path: orbit-spaceflight
+
+      - name: Checkout orbit-mvi fork (observer SPI branch)
+        uses: actions/checkout@v4
+        with:
+          repository: falcon4ever/orbit-mvi
+          ref: feature/orbit-core-observer-spi
+          path: orbit-mvi
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Cache Kotlin/Native toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('orbit-spaceflight/gradle/libs.versions.toml') }}
+
+      - name: Build and test (Apple targets)
+        working-directory: orbit-spaceflight
+        run: >
+          ./gradlew
+          compileAppleMainKotlinMetadata
+          compileKotlinIosArm64
+          compileKotlinIosSimulatorArm64
+          compileKotlinIosX64
+          compileKotlinMacosArm64
+          compileKotlinTvosArm64
+          compileKotlinTvosSimulatorArm64
+          compileKotlinWatchosArm32
+          compileKotlinWatchosArm64
+          compileKotlinWatchosDeviceArm64
+          compileKotlinWatchosSimulatorArm64
+          linkDebugFrameworkIosSimulatorArm64
+          macosArm64Test
+          iosSimulatorArm64Test
+          tvosSimulatorArm64Test
+          watchosSimulatorArm64Test
