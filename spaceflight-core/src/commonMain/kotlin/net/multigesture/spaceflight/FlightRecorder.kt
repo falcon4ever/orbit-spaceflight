@@ -55,6 +55,12 @@ public class FlightRecorder internal constructor(
     private val buffer = RecorderBuffer(config.capacity, config.minRetainedReductionsPerContainer)
     private val containers = mutableMapOf<Long, RecordedContainer>()
     private val excludedContainerIds = mutableSetOf<Long>()
+
+    // Per-container application-order chains. Orbit reports each reduction's exact old->new
+    // pair but racing reductions may *arrive* in either order, so a reduction is appended only
+    // once its oldState is the state the container actually held (identity, or equality for
+    // the flow's own no-op deduplication). Anything else waits, briefly, in `pending`.
+    private val chains = mutableMapOf<Long, ReductionChain>()
     private var nextSeq = 0L
     private var generation = 0L
     private val _revision = MutableStateFlow(0L)
@@ -69,7 +75,7 @@ public class FlightRecorder internal constructor(
     /** Install on Orbit containers, e.g. via `Orbit.configureDefaults { eventObserver = ... }`. */
     public val eventObserver: OrbitEventObserver = RecorderEventObserver()
 
-    /** The currently live (attached) containers, newest first. */
+    /** The currently live (attached) containers, in attach order. */
     public fun liveContainers(): List<RecordedContainer> = lock.withLock {
         containers.values.toList()
     }
@@ -104,6 +110,9 @@ public class FlightRecorder internal constructor(
         lock.withLock {
             buffer.clear()
             generation++
+            // Whatever was waiting for a predecessor is gone with the recording; the next
+            // reduction re-anchors the chain
+            chains.values.forEach { it.reset() }
         }
         _revision.update { it + 1 }
     }
@@ -124,6 +133,63 @@ public class FlightRecorder internal constructor(
         _revision.update { it + 1 }
     }
 
+    // Must be called under `lock`
+    private fun appendReduction(
+        containerId: Long,
+        timeMillis: Long,
+        intentId: Long?,
+        oldState: Any,
+        newState: Any,
+        noOp: Boolean,
+    ) {
+        buffer.append(
+            SpaceflightEvent.Reduction(
+                seq = nextSeq++,
+                timeMillis = timeMillis,
+                containerId = containerId,
+                intentId = intentId,
+                oldState = oldState,
+                newState = newState,
+                noOp = noOp,
+            )
+        )
+    }
+
+    // Must be called under `lock`
+    private fun appendReduction(containerId: Long, reduction: PendingReduction) = appendReduction(
+        containerId, reduction.timeMillis, reduction.intentId, reduction.oldState, reduction.newState, reduction.noOp,
+    )
+
+    // Must be called under `lock`. Appends every pending reduction whose predecessor has now
+    // been applied, in chain order.
+    private fun drainPending(chain: ReductionChain, containerId: Long) {
+        while (chain.pending.isNotEmpty()) {
+            val next = chain.pending.indexOfFirst { chain.accepts(it.oldState) }
+            if (next < 0) return
+            val reduction = chain.pending.removeAt(next)
+            appendReduction(containerId, reduction)
+            chain.advance(reduction.noOp, reduction.oldState, reduction.newState)
+        }
+    }
+
+    // Must be called under `lock`. The chain is broken (a predecessor will never arrive):
+    // say so in the timeline, append what we have in arrival order and re-anchor on the newest.
+    private fun flushOutOfOrder(chain: ReductionChain, containerId: Long) {
+        if (chain.pending.isEmpty()) return
+        buffer.append(
+            SpaceflightEvent.Diagnostic(
+                seq = nextSeq++,
+                timeMillis = config.timeSource(),
+                containerId = containerId,
+                message = "${chain.pending.size} reduction(s) could not be placed in application " +
+                    "order (predecessor never arrived); recorded in arrival order",
+            )
+        )
+        chain.pending.forEach { appendReduction(containerId, it) }
+        chain.pending.last().let { chain.advance(it.noOp, it.oldState, it.newState) }
+        chain.pending.clear()
+    }
+
     private inner class RecorderEventObserver : OrbitEventObserver {
         override fun onContainerCreated(containerInfo: ContainerInfo) {
             val time = config.timeSource()
@@ -138,6 +204,7 @@ public class FlightRecorder internal constructor(
                     attachedAtMillis = time,
                 )
                 buffer.attach(containerInfo.containerId)
+                chains[containerInfo.containerId] = ReductionChain(containerInfo.initialState)
                 buffer.append(
                     SpaceflightEvent.ContainerAttached(
                         seq = nextSeq++,
@@ -156,6 +223,7 @@ public class FlightRecorder internal constructor(
             lock.withLock {
                 if (excludedContainerIds.remove(containerId)) return
                 containers.remove(containerId)
+                chains.remove(containerId)?.let { flushOutOfOrder(it, containerId) }
                 buffer.detach(containerId)
                 buffer.append(
                     SpaceflightEvent.ContainerDetached(
@@ -205,21 +273,32 @@ public class FlightRecorder internal constructor(
         override fun onReduction(containerId: Long, intentId: Long?, oldState: Any, newState: Any) {
             val time = config.timeSource()
             val noOp = oldState == newState
-            lock.withLock {
+            val appended = lock.withLock {
                 if (containerId in excludedContainerIds) return
-                buffer.append(
-                    SpaceflightEvent.Reduction(
-                        seq = nextSeq++,
-                        timeMillis = time,
-                        containerId = containerId,
-                        intentId = intentId,
-                        oldState = oldState,
-                        newState = newState,
-                        noOp = noOp,
-                    )
-                )
+                val chain = chains[containerId]
+                when {
+                    // In order (the overwhelmingly common case), or an unknown container with
+                    // nothing to link to: one identity compare, then append as before
+                    chain == null || chain.accepts(oldState) -> {
+                        appendReduction(containerId, time, intentId, oldState, newState, noOp)
+                        if (chain != null) {
+                            chain.advance(noOp, oldState, newState)
+                            if (chain.pending.isNotEmpty()) drainPending(chain, containerId)
+                        }
+                        true
+                    }
+                    else -> {
+                        chain.pending.addLast(PendingReduction(time, intentId, oldState, newState, noOp))
+                        if (chain.pending.size > MAX_PENDING_REDUCTIONS) {
+                            flushOutOfOrder(chain, containerId)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
             }
-            _revision.update { it + 1 }
+            if (appended) _revision.update { it + 1 }
         }
 
         override fun onSideEffect(containerId: Long, intentId: Long?, sideEffect: Any) {
@@ -242,6 +321,47 @@ public class FlightRecorder internal constructor(
 
     private companion object {
         private const val GAP_MARKER_SEQ = -1L
+
+        /** Racing reductions resolve within a handful of events; more than this means a broken chain. */
+        private const val MAX_PENDING_REDUCTIONS = 32
+    }
+}
+
+/** A reduction that has arrived but not yet been given a seq. */
+private class PendingReduction(
+    val timeMillis: Long,
+    val intentId: Long?,
+    val oldState: Any,
+    val newState: Any,
+    val noOp: Boolean,
+)
+
+/**
+ * The application-order chain of one container's reductions: the state the container currently
+ * holds (as far as the recording knows) and reductions that arrived before their predecessor.
+ */
+private class ReductionChain(initialState: Any) {
+    /** Last applied state, or null when unknown (after [reset]); null accepts anything and re-anchors. */
+    private var last: Any? = initialState
+    val pending = ArrayDeque<PendingReduction>()
+
+    fun accepts(oldState: Any): Boolean {
+        val current = last ?: return true
+        // Identity is the production case: Orbit passes the flow's stored instance as oldState.
+        // Equality covers the flow's own deduplication (a no-op reduction's new instance is
+        // never stored) and states that are value-equal by construction, e.g. boxed primitives.
+        return current === oldState || current == oldState
+    }
+
+    fun advance(noOp: Boolean, oldState: Any, newState: Any) {
+        // The flow does not store a value-equal new instance, so after a no-op the container
+        // still holds the old instance
+        last = if (noOp) oldState else newState
+    }
+
+    fun reset() {
+        last = null
+        pending.clear()
     }
 }
 

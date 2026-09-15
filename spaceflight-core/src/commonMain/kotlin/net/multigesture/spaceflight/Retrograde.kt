@@ -73,9 +73,13 @@ public class Retrograde(
         // freeze() runs user transformState: keep it outside this lock (spin lock on
         // native). Publishing INSPECTING first means containers created in the gap join
         // frozen via decorate(); each freeze() is individually guarded and idempotent.
+        // Lock order: the recorder's lock is never taken while holding this one (both are spin
+        // locks on native and snapshot() is O(n log n) on a populated ring), so the snapshot is
+        // taken first. A reduction landing between the two is at most one stale frame, which the
+        // next command corrects.
+        val reductions = reductions()
         val toFreeze = lock.withLock {
             if (_state.value.mode == TimeTravelMode.INSPECTING) return
-            val reductions = reductions()
             cursor = reductions.lastOrNull()?.seq
             publish(reductions)
             decorators.values.toList()
@@ -130,8 +134,8 @@ public class Retrograde(
     }
 
     override fun clear() {
+        recorder.clear() // recorder lock first, never nested inside ours (see inspect())
         lock.withLock {
-            recorder.clear()
             if (_state.value.mode == TimeTravelMode.INSPECTING) {
                 cursor = null
                 publish(emptyList())
@@ -140,13 +144,14 @@ public class Retrograde(
     }
 
     private fun navigate(target: (reductions: List<SpaceflightEvent.Reduction>, current: Long) -> Long) {
-        // Projection targets are computed under the lock; showState (which runs user
-        // transformState) is applied outside it. A command racing another may display one
-        // stale frame, which the next command corrects - unbounded spinning on user code
-        // (the native lock is a spin lock) would be strictly worse.
+        // The snapshot is taken before the lock (see inspect() for the lock order) and
+        // projection targets are computed under it; showState (which runs user transformState)
+        // is applied outside it. A command racing another may display one stale frame, which
+        // the next command corrects - unbounded spinning on user code (the native lock is a
+        // spin lock) would be strictly worse.
+        val reductions = reductions()
         val toShow = lock.withLock {
             if (_state.value.mode != TimeTravelMode.INSPECTING) return
-            val reductions = reductions()
             val current = cursor ?: reductions.lastOrNull()?.seq ?: return
             cursor = target(reductions, current)
             publish(reductions)
@@ -155,6 +160,9 @@ public class Retrograde(
         toShow.forEach { (decorator, projected) -> decorator.showState(projected) }
     }
 
+    // The recorder appends each container's reductions in application order (it links them by
+    // the state they were applied to), so "last reduction at or before the cursor" is exactly the
+    // state the container held at that point in the timeline.
     private fun projectionTargets(
         reductions: List<SpaceflightEvent.Reduction>,
     ): List<Pair<TimeTravelContainerDecorator<*, *, *>, Any>> {
