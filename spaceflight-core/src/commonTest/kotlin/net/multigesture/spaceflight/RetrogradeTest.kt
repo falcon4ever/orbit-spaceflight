@@ -71,6 +71,27 @@ internal class RetrogradeTest {
     }
 
     @Test
+    fun cursor_follows_application_order_even_when_callbacks_arrive_inverted() = runTest {
+        val container = backgroundScope.intContainer()
+        val containerId = recorder.liveContainers().single().containerId
+        val observer = recorder.eventObserver
+
+        // Two racing reductions whose callbacks land in the wrong order: 1->2 is reported
+        // before 0->1. Projecting by arrival would show 1 as the *final* state.
+        observer.onReduction(containerId, intentId = null, oldState = 1, newState = 2)
+        observer.onReduction(containerId, intentId = null, oldState = 0, newState = 1)
+
+        retrograde.inspect()
+        retrograde.moveToEnd()
+        assertEquals(2, container.stateFlow.value)
+        retrograde.stepBackward()
+        assertEquals(1, container.stateFlow.value)
+        retrograde.stepBackward()
+        assertEquals(0, container.stateFlow.value)
+        retrograde.resume()
+    }
+
+    @Test
     fun stepping_replays_recorded_states_in_both_directions() = runTest {
         val container = backgroundScope.intContainer()
         for (value in 1..3) container.reduceTo(value)

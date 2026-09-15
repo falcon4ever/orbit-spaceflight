@@ -90,10 +90,10 @@ internal class FlightRecorderThreadingTest {
         assertEquals(WRITERS * EVENTS_PER_WRITER, reductions.size)
         assertEquals(reductions.size + WRITERS, final.events.map { it.seq }.toSet().size)
 
-        // Per container, the recorded transitions reconstruct the exact 0..N chain
+        // Per container, the recording *is* the exact 0..N chain in seq order: the recorder
+        // links reductions by the state they were applied to, so no re-sorting by content
         reductions.groupBy { it.containerId }.forEach { (_, containerReductions) ->
-            val ordered = containerReductions.sortedBy { it.oldState as Int }
-            ordered.forEachIndexed { index, reduction ->
+            containerReductions.forEachIndexed { index, reduction ->
                 assertEquals(index, reduction.oldState)
                 assertEquals(index + 1, reduction.newState)
             }
